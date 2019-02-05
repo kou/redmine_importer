@@ -13,7 +13,7 @@ end
 class ImporterController < ApplicationController
   unloadable
 
-  before_filter :find_project
+  before_action :find_project
 
   ISSUE_ATTRS = [:id, :subject, :assigned_to, :fixed_version,
                  :author, :description, :category, :priority, :tracker, :status,
@@ -337,7 +337,7 @@ class ImporterController < ApplicationController
     iip.delete
 
     # Garbage prevention: clean up iips older than 3 days
-    ImportInProgress.delete_all(["created < ?",Time.new - 3*24*60*60])
+    ImportInProgress.where(["created < ?",Time.new - 3*24*60*60]).delete_all
   end
 
   private

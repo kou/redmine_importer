@@ -1,6 +1,6 @@
 require File.expand_path('../../test_helper', __FILE__)
 
-class ImporterControllerTest < ActionController::TestCase
+class ImporterControllerTest < Redmine::ControllerTest
   def setup
     @tracker = Tracker.generate!
     @project = Project.generate!
@@ -8,15 +8,22 @@ class ImporterControllerTest < ActionController::TestCase
     @user = create_user!(@role, @project)
     @iip = create_iip_for_multivalues!(@user)
     @issue = create_issue!(@project, @user)
+    @notified_user = create_notified_user!(@project, @issue)
     create_custom_fields!(@issue)
     create_versions!(@project)
     User.stubs(:current).returns(@user)
   end
 
+  if instance_method(:post).parameters[1][0] == :rest
+    def post(action, **args)
+      super(action, args[:params])
+    end
+  end
+
   test 'should handle multiple values for versions' do
     assert issue_has_none_of_these_affected_versions?(@issue,
                                                       ['Admin', '2013-09-25'])
-    post :result, build_params
+    post :result, :params => build_params
     assert_response :success
     @issue.reload
     assert issue_has_all_these_affected_versions?(@issue, ['Admin', '2013-09-25'])
@@ -24,7 +31,7 @@ class ImporterControllerTest < ActionController::TestCase
 
   test 'should handle multiple values for tags' do
     assert issue_has_none_of_these_tags?(@issue, ['tag1', 'tag2'])
-    post :result, build_params
+    post :result, :params => build_params
     assert_response :success
     @issue.reload
     assert issue_has_all_these_tags?(@issue, ['tag1', 'tag2'])
@@ -32,7 +39,7 @@ class ImporterControllerTest < ActionController::TestCase
 
   test 'should handle single-value fields' do
     assert_equal 'foobar', @issue.subject
-    post :result, build_params
+    post :result, :params => build_params
     assert_response :success
     @issue.reload
     assert_equal 'barfooz', @issue.subject
@@ -41,30 +48,33 @@ class ImporterControllerTest < ActionController::TestCase
   test 'should create issue if none exists' do
     Issue.delete_all
     assert_equal 0, Issue.count
-    post :result, build_params(:update_issue => nil,
-                               :default_tracker => @tracker.id)
+    post :result,
+         :params => build_params(:update_issue => nil,
+                                 :default_tracker => @tracker.id)
     assert_response :success
     assert_equal 1, Issue.count
     issue = Issue.first
     assert_equal 'barfooz', issue.subject
   end
 
-  test 'should send email when "Send email notifications" checkbox is checked' do
+  test 'should send email when "Disable email notifications" checkbox is unchecked' do
     assert_equal 'foobar', @issue.subject
 
     assert_difference 'ActionMailer::Base.deliveries.size', 1 do
-      post :result, build_params(:disable_send_emails => nil)
+      post :result,
+           :params => build_params(:disable_send_emails => nil)
     end
     assert_response :success
     @issue.reload
     assert_equal 'barfooz', @issue.subject
   end
 
-  test 'should NOT send email when "Send email notifications" checkbox is unchecked' do
+  test 'should NOT send email when "Disable email notifications" checkbox is checked' do
     assert_equal 'foobar', @issue.subject
 
     assert_no_difference 'ActionMailer::Base.deliveries.size' do
-      post :result, build_params(:disable_send_emails => 'true')
+      post :result,
+           :params => build_params(:disable_send_emails => "true")
     end
     assert_response :success
     @issue.reload
@@ -88,7 +98,7 @@ class ImporterControllerTest < ActionController::TestCase
         'Tracker' => 'tracker',
         'Status' => 'status'
       }
-    )
+    ).compact
   end
   
   def issue_has_all_these_affected_versions?(issue, version_names)
@@ -134,26 +144,27 @@ class ImporterControllerTest < ActionController::TestCase
   end
 
   def create_user!(role, project)
-    sponsor = User.generate! :admin => true,
-                     :firstname => 'Alice',
-                     :lastname => 'Hacker',
-                     :mail => 'alice.hacker@example.com'
-    sponsor.pref.no_self_notified = false
-    user = User.generate! :admin => true,
-                     :firstname => 'Bob',
-                     :lastname => 'Loblaw',
-                     :mail => 'bob.loblaw@example.com'
-    user.pref.no_self_notified = false
-    user.login = 'bob'
-    membership = user.memberships.build(:project => project)
-    membership.roles << role
-    membership.principal = user
-    user.save!
+    user = User.generate! :login => 'bob',
+                          :firstname => 'Bob',
+                          :lastname => 'Loblaw',
+                          :mail => 'bob.loblaw@example.com'
+    User.add_to_project(user, project, [role])
     user
   end
 
   def create_iip_for_multivalues!(user)
     create_iip!('CustomFieldMultiValues', user)
+  end
+
+  def create_notified_user!(project, issue)
+    user = User.generate! :login => 'alice',
+                          :firstname => 'Alice',
+                          :lastname => 'Hacker',
+                          :mail => 'alice.hacker@example.com',
+                          :mail_notification => 'all'
+    visible_role = Role.generate!(:permissions => [:view_issues])
+    User.add_to_project(user, project, [visible_role])
+    user
   end
 
   def create_iip!(filename, user)
